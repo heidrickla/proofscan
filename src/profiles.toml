@@ -1,0 +1,36 @@
+# Framework profiles, merged into the configuration when named or detected.
+
+[home-assistant]
+detect = "custom_components/*/manifest.json"
+
+[[home-assistant.q4.entry]]
+name = "service action"
+call = '(^|\.)services\.async_register$'
+handler_arg = 2
+handler_kw = "service_func"
+# The administrator rule covers what an action changes outside the integration's own state.
+effects = ["registry-write"]
+
+[[home-assistant.q4.guarded_entry]]
+name = "admin service action"
+call = '(^|\.)async_register_admin_service$'
+handler_arg = 3
+handler_kw = "service_func"
+
+[[home-assistant.q4.guard]]
+name = "admin check"
+call = '(^|\.)(is_admin|async_get_user|verify_domain_control|require_admin)$'
+
+[[home-assistant.effect]]
+kind = "registry-write"
+call = '(^|\.)(async_update_device|async_update_entity|async_remove_device|async_remove_entity|async_get_or_create|async_create|async_update|async_delete|async_update_label|async_create_label|async_delete_label)$'
+receiver_from = '(^|\.)((lr|dr|er|ar|fr)|label_registry|device_registry|entity_registry|area_registry|floor_registry)\.async_get$'
+
+[[home-assistant.q6.resource]]
+name = "cloudhook"
+acquire = '(^|\.)async_(get_or_)?create_cloudhook$'
+release = '(^|\.)async_delete_cloudhook$'
+durable = true
+
+[home-assistant.q6]
+startup = ['^async_setup$']

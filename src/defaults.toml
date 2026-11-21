@@ -1,0 +1,198 @@
+# proofscan defaults. A repository's proofscan.toml is merged over this: tables merge key by key,
+# arrays append, scalars replace. Patterns are regexes matched against a call's callee text with
+# whitespace removed (`self.api.get`, `dt.datetime.now`, `Instant::now`, `Remove-Item`).
+
+[scan]
+exclude = [".git/**", "**/.venv/**", "**/venv/**", "**/node_modules/**", "**/target/**", "**/vendor/**", "**/__pycache__/**", "**/dist/**", "**/build/**", "**/site-packages/**"]
+# Profiles add entry points, effects and guards for a framework; detected when not named.
+profiles = []
+
+# Question 1: each fact has one provider. A call matching a pattern reads that provider.
+[providers]
+clock = [
+  '(^|\.)datetime\.(now|utcnow|today)$',
+  '(^|\.)date\.today$',
+  '^time\.(time|time_ns|localtime|gmtime|ctime)$',
+  '(^|\.)dt_util\.(now|utcnow)$',
+  '^(std::time::)?SystemTime::now$',
+  '^(chrono::)?(Utc|Local)::now$',
+  '^OffsetDateTime::now_(utc|local)$',
+  'js:^Date\.now$',
+  'js:^new Date$',
+  'sh:^date$',
+  'ps:^Get-Date$',
+]
+monotonic = [
+  '^time\.(monotonic|monotonic_ns|perf_counter|perf_counter_ns)$',
+  '^(std::time::)?Instant::now$',
+  '^performance\.now$',
+  '(^|\.)loop\.time$',
+]
+random = [
+  '^random\.\w+$',
+  '^secrets\.\w+$',
+  '^(uuid\.)?uuid4$',
+  '^(rand::)?(random|thread_rng|rng)$',
+  '^Math\.random$',
+  '^Get-Random$',
+]
+env = [
+  '^os\.(getenv|environ\.get)$',
+  '^(std::)?env::var(_os)?$',
+  '^\$env:',
+]
+
+[q1]
+# Providers whose reads are one fact (two reads in a decision are two sources). A random draw and a
+# monotonic reading are new values each time (a deadline loop reads elapsed time on every turn), so
+# they are left out. `env` and `endpoint` facts are named by their literal key.
+single_fact = ["clock", "env", "endpoint"]
+# A call reading an endpoint: the name matches and its first literal argument is a path.
+endpoint = '(^|\.)(get|fetch|call|request|head)$'
+# Parameter annotations that hold only members of a closed set.
+closed_types = '^(int|float|bool|UUID|uuid\.UUID|datetime|dt\.datetime|date|timedelta|\w*Enum|Literal\[.*\]|IPv4Address|IPv6Address)$'
+# provider = ["path::function", ...]: the only functions allowed to read that provider.
+declared = {}
+# A test double method sharing this many decision tokens with the production method it stands
+# for re-implements its rules.
+double_shared_tokens = 4
+# Readings kept on purpose: [{ function = "path::Class.f", provider = "clock", readings = 2, reason = "..." }].
+# One-reading sites in that function are proven with the reason while it reads the provider at no
+# more than `readings` sites.
+accepted_reading = []
+double_class = '^(Fake|Stub|Mock|Dummy|Spy|Double)\w*$|\w*(Fake|Stub|Mock|Double)$'
+# Values parsed from outside (a file, a reply) that carry a time.
+external_time = ['(^|\.)fromisoformat$', '(^|\.)strptime$', '(^|\.)fromtimestamp$', '(^|\.)parse(_datetime)?$', '(^|\.)DateTime::parse_from_rfc3339$']
+# A call that cuts a clock reading to the precision an outside source writes (by name; an assumption).
+normalize = ['(^|\.)(to_the_(milli|micro)?second|truncate_to_\w+|quantize_\w*|floor_to_\w+)$']
+# Calls that only report what happened: a reading passed straight into one decides nothing, so it
+# is not a second source (a log line's timestamp next to the deadline check).
+# Provider calls that convert a time they are given: a read only when called with no argument.
+argless = ['^new Date$', '^time\.(localtime|gmtime|ctime)$']
+report = ['^(print|println!?|eprintln!?|format!?|echo|printf|logger|console\.(log|warn|error|info|debug)|Write-(Host|Output|Verbose|Warning|Debug))$', '(^|\.)_?(log(ger)?|LOG(GER)?)\.(debug|info|warning|warn|error|exception|critical|log)$', '^(logging|tracing|log)(::|\.)(debug|info|warn|warning|error|trace|exception|critical)!?$', '^(debug|info|warn|error|trace)!$']
+
+[q2]
+# A suite-wide fixture that replaces a name matching this disables a production guard.
+guard_names = '(?i)(verif|guard|check|valid|auth|admin|allow|permit|trust|gate|unverified|precheck|lock)'
+# [[q2.wire]] name, pattern (a fixture literal of this wire), captures (globs of real captures).
+wire = []
+
+[q3]
+# Functions whose call verifies something before an effect; inferred when empty: a call in an
+# `if` condition whose branch exits, to a function that reads a provider.
+guards = []
+# Store identity for a read written back (stale-write-back) and for a held run's files
+# (held-run-recovery): file-name literals, and constants given to a path call.
+store_file = '^[\w.-]+\.(json|jsonl|ndjson|toml|ya?ml|txt|csv|db|sqlite3?|log|lock|pid|ini|cfg|state)$'
+# Calls that write; a call through a local (a list's append) writes no store.
+store_write = '(?i)^_?(write|save|put|publish|replace|rename|append|dump|persist|stage|unlink|remove)|_(write|save|append|put)\w*$|durabl'
+
+[q3.vouch]
+clock = '(?i)(synchroni[sz]ed|unsync|clock_?sync|time_?sync|ntp)'
+
+[q4]
+entry = []
+guarded_entry = []
+guard = []
+# Writes before a guard kept on purpose: [{ site = "path:line" or "path::Class.f", reason = "..." }];
+# reported proven. A function label covers every such write in it and survives edits above it.
+accepted_order = []
+
+# Effects: what a guard protects and what a success claim must read back.
+[[effect]]
+kind = "delete"
+call = '(^|\.)(unlink|rmtree|rmdir|remove_file|remove_dir|remove_dir_all|unlinkSync|rmSync)$|^(rm|Remove-Item|del)$'
+[[effect]]
+kind = "delete"
+call = '(^|\.)(call|request|send_json|async_send_command)$'
+arg = '(?i)(^|/)(delete|remove|purge|wipe)(/|$)'
+[[effect]]
+kind = "write"
+call = '(^|\.)(write_text|write_bytes|write_durably|atomic_write|async_save)$|^(json|yaml|pickle|toml)\.dump$|^os\.(replace|rename)$|^(fs::)?(write|rename)$|^(Set-Content|Out-File|Add-Content)$'
+[[effect]]
+kind = "send"
+call = '(^|\.)(post|put|patch|delete|send_keys|sendall|write_frame|send_command)$|^(curl|Invoke-RestMethod|Invoke-WebRequest)$'
+[[effect]]
+kind = "subprocess"
+call = '^subprocess\.(run|call|check_call|check_output|Popen)$|^os\.(system|exec\w*|spawn\w*)$|^(std::process::)?Command::new$|^Start-Process$|(^|\.)create_subprocess_(exec|shell)$'
+
+[q5]
+# Calls that parse a value into a closed set, or escape it for the sink.
+closed_parse = [
+  '^(int|float|bool|UUID|uuid\.UUID|Decimal|ip_address|ip_network)$',
+  '(^|\.)(fullmatch|is_valid_\w+|validate_\w+|check_\w+_id|parse_uuid|from_str|parse)$',
+  '(^|\.)(quote|quote_plus|escape|pathname2url)$',
+  '(^|\.)(strftime|isoformat|hexdigest|hex)$',
+  '^\w+Enum$',
+]
+# Deny lists accepted with a reason: [{ site = "path:line", reason = "..." }].
+accepted_deny = []
+
+[q6]
+emitted_bytes = false
+prefix_work = false
+# [[q6.resource]] name, acquire, release (patterns), durable (outlives the process),
+# startup (functions run at every start; a durable resource needs a release reachable from one).
+resource = []
+startup = ['^(main|async_setup|setup|start|run)$']
+query_names = '^(alive|is_alive|is_running|running|exists|status|ping|healthy|is_ready|ready|probe)$'
+# Untrusted input enters at request handlers: `.route(path, get(h).post(h2))` (axum), and at
+# functions a repository names in `untrusted_function`, a pattern over `path:name` (a parser of
+# a request body; `^vendor/xml/src/` for every function of a vendored parser).
+untrusted_route = '(^|\.)route$'
+untrusted_method = '^(get|post|put|patch|delete|head|options|any|on)$'
+untrusted_function = ''
+store_write = '(^|\.)(store|audit_store|log_store|db|database)\.(audit|insert|execute|write)$'
+authenticated_extractors = '^(AdminToken|AdminUser|AuthenticatedUser|CurrentUser)$'
+authenticated_calls = '^(auth|auth_owner|authorize_actor|require_bearer)$'
+
+[q7]
+# A probe whose reply alone cannot show the state it is used to claim.
+[[q7.weak_probe]]
+call = '^os\.(kill|killpg)$'
+arg1 = '^0$'
+why = "signal 0 succeeds for a zombie or a member that left the group; it is no read of the process state"
+
+[q9]
+# Calls taken not to raise between taking and releasing a resource (an assumption, by name).
+no_raise = ['^os\.path\.(join|exists|isfile|isdir|islink|basename|dirname|split|splitext|normpath)$', '^(len|isinstance|issubclass|hasattr|id|repr|bool|callable|type)$', '^(contextlib\.)?suppress$']
+# Resources held in the process, released on every exit including a raise and a cancellation.
+# Patterns: a callee, `arg:` a literal argument, `assign:` an assignment as `target = value`.
+[[q9.resource]]
+name = "lock"
+acquire = ['py:(^|\.)acquire$']
+release = ['py:(^|\.)release$']
+
+[[q9.resource]]
+name = "holder"
+acquire = ['assign:py:^self\.\w*_holder = \S']
+release = ['assign:py:^self\.\w*_holder = None$']
+
+[[q9.resource]]
+name = "temporary file"
+acquire = ['py:^(tempfile\.)?(mkstemp|mkdtemp)$']
+release = ['py:^(os\.(unlink|remove)|shutil\.rmtree)$']
+
+[q10]
+# Reads of a credential store, by the path literal a call is given (open, Path, cat, ssh '...').
+source = ['arg:(^|/)\.storage/', 'arg:(^|/)secrets\.ya?ml\b', 'arg:(^|/)(credentials|secrets)\.json\b', 'arg:(^|/)\.env$', 'arg:(^|/)id_(rsa|ed25519|ecdsa)\b', 'arg:(^|/)[\w.-]+\.key\b']
+env_read = '^os\.(getenv|environ\.get)$|^(std::)?env::var$|^process\.env$'
+secret_name = '(?i)password|passwd|passphrase|secret|token|api_?key|access_?key|private_?key|encryption_?key|cookie|credential'
+path_call = '^(Path|pathlib\.Path|PurePath|PurePosixPath|os\.path\.\w+|Path::new|PathBuf::from)$|(^|\.)joinpath$'
+read_call = '(^|\.)(read_text|read_bytes)$|^(open|io\.open|json\.load|yaml\.safe_load|(std::)?fs::read(_to_string)?)$'
+not_sink_kwarg = '^(env|input|stdin|stdout|stderr|cwd|timeout|check|text|capture_output|shell|encoding|errors|exc_info|stack_info|stacklevel)$'
+not_secret_name = '(?i)(^|_)(file|path|dir|url|uri|name|id|env|var|endpoint|header|type|len|length|ttl|expiry|expires)$'
+# Outside calls that carry a credential into their result. A client call (requests.get with a token
+# header) does not: its response is not the token.
+carry = ['^(str|bytes|repr|format|bytearray)$', '\.(strip|lstrip|rstrip|encode|decode|lower|upper|format|replace|split|rsplit|join|removeprefix|removesuffix|partition|ljust|rjust|to_string|to_owned|clone|as_str|trim|into)$', '^(base64\.\w+|binascii\.\w+|json\.dumps|urllib\.parse\.(quote\w*|urlencode)|shlex\.(quote|join)|os\.fsencode|codecs\.encode)$', 'rs:^(String::from|format!)$']
+sanitize = ['(^|\.)(redact\w*|_?mask\w*|len|hash\w*|sha\d+|md5|blake2\w*|hexdigest|digest|bool|fingerprint\w*|compare_digest)$']
+# Logs and prints (question 1's report calls are added), argv of a child process, error text.
+sink = ['^(subprocess\.(run|Popen|call|check_call|check_output)|os\.(system|popen|exec\w*|spawn\w*)|asyncio\.create_subprocess_(exec|shell))$', 'py:^\w*(Error|Exception)$', '^sys\.(stdout|stderr)\.write$']
+pipe_sanitize = '^(wc|sha\d+sum|md5sum|b2sum)\b|\blength\b|^grep -c\b'
+print_cmd = '^(cat|tac|head|tail|less|more|jq|yq|base64|xxd|od|hexdump|strings|nl|awk|sed|grep|egrep|bat|Get-Content|type)$'
+wrapper_cmd = '^(ssh|sudo|docker|kubectl|bash|sh|env)$'
+quiet_arg = '^(-[a-zA-Z]*[qclLi][a-zA-Z]*|--(quiet|silent|count|files-with-matches|in-place))$'
+
+[report]
+# Exit status: 0 nothing violated or unknown, 1 a violation, 2 an unknown (and no violation).
+unknown_fails = true
